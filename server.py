@@ -7,7 +7,7 @@
   POST /api/run        -> SSE 流: 收 {"message":..., "session_id":?, "image":?}
                             image = {name?, data: <base64>} 存为工作目录 ref.png
                             逐事件推送 thought/tool/tool_result/done/error + end
-跨会话记忆: 每会话共享 agent/memory_state.db(SessionDB), 大脑自动 recall/沉淀。
+跨会话记忆: 每会话共享 agent/memory.db(SQLite FTS5), 大脑自动 recall/沉淀。
 运行: python server.py [port]  (默认 8901)"""
 import base64
 import json
@@ -77,10 +77,10 @@ def _new_agent(workdir, model=None):
     from agent.tools import make_modeling_registry, modeling_rules, image_mode_rules
     from agent.memory import Memory
     try:
-        mem = Memory()  # 项目独立记忆库 agent/memory_state.db(借 Hermes SessionDB)
+        mem = Memory()  # 项目独立记忆库 agent/memory.db(SQLite FTS5)
     except Exception as e:
         # 记忆层本来就是可选的(loop.py 每处调用都判 if self.memory), 这里补上降级:
-        # SessionDB 装不上或版本不兼容时, 无记忆照常建模, 不至于整个程序起不来。
+        # 记忆库建不起来时(目录不可写等), 无记忆照常建模, 不至于整个程序起不来。
         mem = None
         print(f"[server] 记忆层不可用, 已降级为无记忆运行: {type(e).__name__}: {e}", flush=True)
     ctx = SimpleNamespace(workdir=workdir, memory=mem)

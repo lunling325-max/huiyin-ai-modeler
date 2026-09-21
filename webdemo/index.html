@@ -211,7 +211,7 @@
         <div class="empty-state" id="emptyState" v-if="cur.blocks.length === 0 && !busy">
           <div class="empty-icon"><i class="fas fa-cube"></i></div>
           <h2>把想要的模型,用一句话说出来</h2>
-          <p>现场生成、预览自审、随改随交付 —— 可编辑 .blend、可打印 .stl(毫米)。</p>
+          <p>现场生成、预览自审、随改随交付 —— 可编辑 .blend、可打印 .stl。</p>
           <div class="za-chips">
             <button v-for="ex in examples" :key="ex.t" class="za-chip" @click="useExample(ex.t)">
               <i :class="ex.i"></i>{{ ex.t }}

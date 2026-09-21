@@ -1,0 +1,11 @@
+# 回音 —— AI 建模智能体 · 运行依赖
+#
+# 另需外部程序 Blender 5.1（不在 pip 里，见 README.md「环境准备」）。
+# 装依赖：pip install -r requirements.txt
+
+requests>=2.31.0
+pillow>=10.0.0
+
+# 跨会话记忆层（可选）：装不上也能正常运行，只是没有跨会话记忆。
+# 它只是被当作 SQLite FTS5 检索库使用，本项目不复用其主循环。
+hermes-agent>=0.19.0

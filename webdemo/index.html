@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>回音 · AI 建模智能体</title>
+<!-- Font Awesome 6(与参考 UI 同一外链) -->
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
+<link rel="stylesheet" href="style.css"/>
+<script>/* 首帧前应用主题,避免闪烁(默认浅色,参照参考 UI) */
+(function(){try{var t=localStorage.getItem('zaowutai_theme');if(t==='dark'){document.documentElement.setAttribute('data-theme','dark')}}catch(e){}})();</script>
+</head>
+<body>
+<div id="app" v-cloak>
+  <div class="app">
+
+    <!-- ===== Toast ===== -->
+    <div id="toast" class="toast" :class="{ show: toastOn }">{{ toastMsg }}</div>
+
+    <!-- ===== 遮罩层(移动端抽屉) ===== -->
+    <div id="overlay" class="overlay" :class="{ active: sidebarOpen }" @click="sidebarOpen = false"></div>
+
+    <!-- ===== 侧边栏 ===== -->
+    <aside class="sidebar" id="sidebar" :class="{ open: sidebarOpen }">
+      <div class="sidebar-header">
+        <a href="#" class="brand" @click.prevent="newChat" title="新建对话">
+          <div class="brand-icon"><i class="fas fa-cube"></i></div>
+          <span class="brand-text">回音 · <span>建模智能体</span></span>
+        </a>
+        <button class="sidebar-close" aria-label="关闭侧边栏" @click="sidebarOpen = false">
+          <i class="fas fa-times"></i>
+        </button>
+      </div>
+
+      <button class="new-chat-btn" id="newChatBtn" @click="newChat" :disabled="busy">
+        <i class="fas fa-plus"></i> 新建对话
+      </button>
+
+      <div class="history-list" id="historyList">
+        <div v-if="!convs.length" class="za-hint">还没有对话。</div>
+        <div v-for="c in convs" :key="c.id"
+             class="history-item" :class="{ active: isCur(c.id) }" :data-id="c.id"
+             @click="selectConv(c.id)" :title="c.title">
+          <i class="fas fa-comment"></i>
+          <span class="history-text">{{ c.title }}</span>
+          <span class="history-date">{{ timeAgo(c.updatedAt) }}</span>
+          <button class="delete-btn" :title="'删除会话:'+c.title" @click.stop="deleteConv(c.id)"><i class="fas fa-times"></i></button>
+        </div>
+      </div>
+
+      <div class="sidebar-footer">
+        <div class="user-profile" @click="onUserClick"
+             :title="currentUser ? ('已登录: ' + currentUser) : '点击切换到登录'">
+          <div class="user-avatar">{{ meGlyph }}</div>
+          <div class="user-info">
+            <div class="email">{{ currentUser ? ('已登录 · ' + currentUser) : '未登录 · 点此登录' }}</div>
+          </div>
+          <button v-if="currentUser" class="user-logout" @click.stop="logout" title="退出登录">退出</button>
+          <i v-else class="fas fa-ellipsis-v" style="color: var(--text-muted); font-size: 13px;"></i>
+        </div>
+      </div>
+    </aside>
+
+    <!-- ===== 主内容 ===== -->
+    <main class="main">
+
+      <!-- ===== 顶部导航 ===== -->
+      <header class="topbar">
+        <div class="topbar-left">
+          <button class="menu-toggle" aria-label="切换侧边栏" @click="openSidebar">
+            <i class="fas fa-bars"></i>
+          </button>
+          <span class="topbar-title" id="chatTitle">
+            回音 · AI 建模智能体
+            <span class="badge-model" id="modelBadge">deepseek-v4-flash · 服务端内置</span>
+          </span>
+        </div>
+        <div class="topbar-right" ref="topRight">
+          <!-- 大脑接入状态 · 点击切换模型 -->
+          <div class="za-model-wrap">
+            <button class="topbar-btn" id="apiStatusBtn" title="点击切换大脑模型"
+                    @click="toggleModelMenu">
+              <i class="fas fa-plug"></i>
+              <span class="status-dot" :class="apiDot" id="apiStatusDot"></span>
+            </button>
+            <div class="za-model-menu" :class="{ active: modelMenuOpen }">
+              <div class="za-model-title"><i class="fas fa-cpu"></i> 大脑模型</div>
+              <div class="za-model-current">当前:{{ modelLabel }}</div>
+
+              <button v-for="m in modelList" :key="m.id" class="za-model-item"
+                      :class="{ on: m.id === model }" @click="setModel(m)">
+                <span class="za-mi-icon"><i class="fas" :class="m.id === model ? 'fa-check-circle' : 'fa-circle'"></i></span>
+                <span class="za-mi-label">
+                  <span class="za-mi-name">{{ m.label }}</span>
+                  <span class="za-mi-sub">{{ m.preset ? '预置' : (m.base_url ? '自定义 · ' + m.model : '自定义') }}</span>
+                </span>
+                <span class="za-mi-del" @click="delModel(m, $event)" title="删除此模型"><i class="fas fa-trash-alt"></i></span>
+              </button>
+
+              <!-- 添加模型表单 -->
+              <button class="za-model-add" @click="toggleModelForm">
+                <i class="fas fa-plus"></i> 添加模型
+              </button>
+              <button class="za-model-help-btn" @click="modelHelpOpen = !modelHelpOpen">
+                <i class="fas fa-circle-question"></i> 怎么填?常用服务示例
+              </button>
+              <div v-if="modelHelpOpen" class="za-model-help">
+                <div class="za-mh-note">留空 base_url = DeepSeek 官方;接别家必须填 base_url。点示例可自动填入。</div>
+                <div v-for="h in modelHelpList" :key="h.name" class="za-mh-row"
+                     @click="useModelHelp(h)" :title="'点击填入 ' + h.base_url + ' / ' + h.model">
+                  <span class="za-mh-name">{{ h.name }}</span>
+                  <span class="za-mh-base">{{ h.base_url || '留空 = DeepSeek 官方' }}</span>
+                  <span class="za-mh-model">{{ h.model }}</span>
+                  <i class="fas fa-arrow-right-to-bracket za-mh-fill"></i>
+                </div>
+              </div>
+              <div v-if="modelFormOpen" class="za-model-form">
+                <label class="za-mf-label">显示名(可选)</label>
+                <input v-model="modelForm.label" placeholder="如:我的 Flash" />
+                <label class="za-mf-label">API 地址 base_url(可选,留空 = DeepSeek 官方)</label>
+                <input v-model="modelForm.base_url" placeholder="留空 = DeepSeek 官方" />
+                <label class="za-mf-label">模型名 model(必填)—— 这一格决定是 Flash 还是 Pro</label>
+                <div class="za-mf-quick">
+                  <button type="button" @click="modelForm.model = 'deepseek-v4-flash'" :class="{ on: modelForm.model === 'deepseek-v4-flash' }">Flash</button>
+                  <button type="button" @click="modelForm.model = 'deepseek-v4-pro'" :class="{ on: modelForm.model === 'deepseek-v4-pro' }">Pro</button>
+                  <span>点击自动填入</span>
+                </div>
+                <input v-model="modelForm.model" placeholder="deepseek-v4-flash" />
+                <label class="za-mf-label">API Key(该服务的凭证)</label>
+                <input v-model="modelForm.api_key" type="password" placeholder="你的 key" />
+                <div class="za-model-form-btns">
+                  <button class="za-model-save" @click="submitModel">添加</button>
+                  <button class="za-model-cancel" @click="modelFormOpen = false">取消</button>
+                </div>
+              </div>
+
+              <div class="za-model-hint">切换模型后建议「新对话」生效;自定义模型可接任意标准接口服务,信息仅存本机。</div>
+            </div>
+          </div>
+          <button class="topbar-btn theme-toggle" aria-label="切换主题" @click="toggleTheme"
+                  :title="dark ? '切换到浅色' : '切换到深色'">
+            <i class="theme-icon" :class="dark ? 'fas fa-sun' : 'fas fa-moon'"></i>
+          </button>
+          <button class="topbar-btn" aria-label="设置" @click="toggleSettings">
+            <i class="fas fa-cog"></i>
+          </button>
+          <button class="topbar-btn" aria-label="通知" @click="toast('暂无新通知')">
+            <i class="fas fa-bell"></i>
+          </button>
+
+          <!-- ===== 设置下拉面板 ===== -->
+          <div class="settings-dropdown" id="settingsDropdown" :class="{ active: settingsOpen }">
+            <div class="dropdown-title">
+              <i class="fas fa-sliders-h"></i> 设置
+            </div>
+
+            <!-- 显示设置 -->
+            <div class="setting-group">
+              <div class="group-label">显示设置</div>
+              <div style="margin-bottom:10px;">
+                <div style="font-size:12px; color:var(--text-muted); margin-bottom:4px;">字体大小</div>
+                <div class="font-size-group">
+                  <button class="font-size-btn" :class="{ active: fontSize==='small' }" @click="setFont('small')">小</button>
+                  <button class="font-size-btn" :class="{ active: fontSize==='medium' }" @click="setFont('medium')">中</button>
+                  <button class="font-size-btn" :class="{ active: fontSize==='large' }" @click="setFont('large')">大</button>
+                </div>
+              </div>
+              <div class="switch-row">
+                <span>显示时间戳</span>
+                <label class="toggle-switch">
+                  <input type="checkbox" v-model="showTs" @change="persistView" />
+                  <span class="toggle-slider"></span>
+                </label>
+              </div>
+              <div class="switch-row">
+                <span>显示操作按钮</span>
+                <label class="toggle-switch">
+                  <input type="checkbox" v-model="showActs" @change="persistView" />
+                  <span class="toggle-slider"></span>
+                </label>
+              </div>
+            </div>
+
+            <!-- 主题色 -->
+            <div class="setting-group">
+              <div class="group-label">主题色</div>
+              <div class="color-row">
+                <span>主色</span>
+                <div class="color-picker-wrapper" @click="$refs.color.click()">
+                  <div class="color-preview" :style="{ background: accent }"></div>
+                  <input type="color" ref="color" :value="accent" @input="setAccent($event.target.value)"
+                         style="position:absolute;opacity:0;width:0;height:0;pointer-events:none;" />
+                </div>
+                <button class="reset-color" @click="setAccent(DEFAULT_ACCENT)" title="恢复默认主色">↺</button>
+              </div>
+            </div>
+
+            <!-- 数据管理 -->
+            <div class="setting-group">
+              <div class="group-label">数据管理</div>
+              <button class="danger-btn" @click="clearAll">清空所有对话</button>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <!-- ===== 聊天消息 ===== -->
+      <div class="chat-messages" id="chatMessages" ref="msgs">
+
+        <!-- 空状态 -->
+        <div class="empty-state" id="emptyState" v-if="cur.blocks.length === 0 && !busy">
+          <div class="empty-icon"><i class="fas fa-cube"></i></div>
+          <h2>把想要的模型,用一句话说出来</h2>
+          <p>现场生成、预览自审、随改随交付 —— 可编辑 .blend、可打印 .stl(毫米)。</p>
+          <div class="za-chips">
+            <button v-for="ex in examples" :key="ex.t" class="za-chip" @click="useExample(ex.t)">
+              <i :class="ex.i"></i>{{ ex.t }}
+            </button>
+          </div>
+        </div>
+
+        <!-- 消息流 -->
+        <div v-for="m in cur.blocks" :key="m.id" class="msg-group" :class="m.role" :data-id="m.id">
+          <div class="msg-bubble">
+            <div class="msg-avatar" :class="m.role === 'user' ? 'user' : 'ai'">{{ m.role === 'user' ? meGlyph : 'AI' }}</div>
+            <div class="msg-content-wrap">
+
+              <div class="msg-content">
+                <!-- 用户 -->
+                <template v-if="m.role === 'user'">
+                  <template v-if="m.editing">
+                    <textarea class="edit-textarea" v-model="m.editText" rows="3"
+                              @keydown.enter="onEnterEdit($event, m)"
+                              @keydown.esc="cancelEdit(m)"></textarea>
+                    <div class="edit-actions">
+                      <button class="save-edit" @click="saveEdit(m)">保存</button>
+                      <button class="cancel-edit" @click="cancelEdit(m)">取消</button>
+                    </div>
+                  </template>
+                  <template v-else>
+                    <p v-if="m.text" class="za-keep">{{ m.text }}</p>
+                    <div v-if="m.img" class="za-userimg">
+                      <img :src="m.img" alt="参考图"/>
+                    </div>
+                  </template>
+                </template>
+
+                <!-- 助手:分块渲染 -->
+                <template v-else>
+                  <div v-for="(b,i) in m.blocks" :key="i">
+                    <!-- 思考旁白 -->
+                    <div v-if="b.k==='thought'" class="za-thought">
+                      <i :class="b.live ? 'fas fa-circle-notch spin' : 'fas fa-lightbulb'"></i>
+                      <span>{{ b.text }}</span>
+                    </div>
+
+                    <!-- 大脑思考过程(流式,滚动显示) -->
+                    <div v-else-if="b.k==='reason'" class="za-reason" :class="{ live: b.live }">
+                      <i class="fas fa-brain"></i>
+                      <span class="za-reason-txt">思考中 · {{ b.text }}</span>
+                    </div>
+
+                    <!-- 工具调用卡 -->
+                    <div v-else-if="b.k==='tool'" class="za-tool" :class="{ open: b.open }">
+                      <div class="za-tool-hd" @click="b.open = !b.open" :title="b.open ? '收起详情' : '展开详情'">
+                        <div class="za-tool-ic"><i :class="toolFa(b.name)"></i></div>
+                        <div class="za-tool-name">{{ toolLabel(b.name) }}<span class="za-tool-sub">{{ toolDesc(b.name) }}</span></div>
+                        <span class="za-tool-st" :class="b.st">
+                          <i :class="b.st==='run' ? 'fas fa-circle-notch' : (b.st==='ok' ? 'fas fa-check' : 'fas fa-xmark')"></i>
+                          {{ b.st==='run' ? '运行中' : (b.st==='ok' ? '完成' : '失败') }}
+                        </span>
+                      </div>
+                      <div v-if="b.open" class="za-tool-body">
+                        <div class="za-lbl">工具参数</div>
+                        <div class="za-pre">{{ b.args }}</div>
+                        <template v-if="b.result !== null">
+                          <div class="za-lbl">返回</div>
+                          <div class="za-pre">{{ b.result }}</div>
+                        </template>
+                      </div>
+                    </div>
+
+                    <!-- 最终回答 -->
+                    <p v-else-if="b.k==='text'" class="za-keep">{{ b.text }}</p>
+
+                    <!-- 出错 -->
+                    <div v-else-if="b.k==='error'" class="za-err">
+                      <i class="fas fa-circle-exclamation"></i><span>{{ b.text }}</span>
+                    </div>
+
+                    <!-- 渲染预览 -->
+                    <div v-else-if="b.k==='imgs'" class="za-imgs">
+                      <div v-for="im in b.items" :key="im.url" class="za-shot">
+                        <a :href="im.url" target="_blank" :title="'查看原图:'+im.name"><img :src="im.url" :alt="im.name" loading="lazy"/></a>
+                        <div class="za-shot-cap">{{ im.name }}</div>
+                      </div>
+                    </div>
+
+                    <!-- 交付文件 -->
+                    <div v-else-if="b.k==='files'" class="za-files">
+                      <div v-for="grp in b.groups" :key="grp.title" class="za-file-group">
+                        <div class="za-files-label"><i :class="grp.icon"></i>{{ grp.title }}</div>
+                        <a v-for="f in grp.items" :key="f.url" class="za-file" :href="f.url" :download="f.name" :title="f.name">
+                          <span class="za-ext">{{ extOf(f.name) }}</span>
+                          <span class="za-finfo">
+                            <span class="za-fname">{{ f.name }}</span>
+                            <span class="za-fmeta">{{ human(f.size) }} · 点击下载</span>
+                          </span>
+                          <i class="fas fa-download za-fdl"></i>
+                        </a>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- 等待首个事件时的思考占位(与 .za-reason 同款, 不黑盒藏三个点) -->
+                  <div v-if="m.status==='sending' && m.blocks.length===0" class="za-reason live">
+                    <i class="fas fa-brain"></i>
+                    <span class="za-reason-txt">思考中 · 正在连接大脑…</span>
+                  </div>
+                </template>
+              </div>
+
+              <div class="msg-time">{{ m.tsText }}</div>
+
+              <!-- 操作按钮 -->
+              <div class="msg-actions">
+                <button @click="copyMsg(m)"><i class="fas fa-copy"></i> 复制</button>
+                <span class="action-divider"></span>
+                <template v-if="m.role === 'user'">
+                  <button @click="startEdit(m)"><i class="fas fa-edit"></i> 编辑</button>
+                  <span class="action-divider"></span>
+                </template>
+                <template v-else>
+                  <button @click="regen(m)"><i class="fas fa-rotate"></i> 重新生成</button>
+                  <span class="action-divider"></span>
+                </template>
+                <button class="danger" @click="deleteMsg(m)"><i class="fas fa-trash"></i> 删除</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ===== 输入区域 ===== -->
+      <div class="input-area">
+        <div class="input-wrapper">
+          <textarea id="chatInput" rows="1" placeholder="描述要建的物体… 如:做一把简洁的木椅"
+                    aria-label="输入消息" v-model="input"
+                    @keydown.enter="onEnterKey"
+                    @compositionstart="composing = true" @compositionend="composing = false"></textarea>
+          <div class="input-actions">
+            <button v-if="busy" id="stopBtn" class="send-btn stop-btn" aria-label="停止生成" @click="stopGen">
+              <i class="fas fa-stop"></i>
+            </button>
+            <button v-else id="sendBtn" class="send-btn" aria-label="发送" @click="send" :disabled="!canSend">
+              <i class="fas fa-arrow-up"></i>
+            </button>
+          </div>
+        </div>
+      </div>
+
+    </main>
+  </div>
+
+  <!-- ===== 登录页(点击左下角用户资料进入) ===== -->
+  <div class="login-veil" v-if="loginVisible" @click.self="loginVisible = false">
+    <div class="login-card">
+      <div class="login-logo"><i class="fas fa-cube"></i></div>
+      <div class="login-title">回音 · AI 建模智能体</div>
+      <div class="login-sub">登录后开始,把想要的模型用一句话说出来</div>
+      <input class="login-input" v-model="loginUser" placeholder="用户名" @keydown.enter="doLogin" />
+      <input class="login-input" v-model="loginPass" type="password" placeholder="密码" @keydown.enter="doLogin" />
+      <button class="login-btn" @click="doLogin"><i class="fas fa-right-to-bracket"></i> 登 录</button>
+      <button class="login-skip" @click="loginVisible = false">先逛逛,暂不登录</button>
+    </div>
+  </div>
+</div>
+<script src="vendor/vue.global.prod.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
